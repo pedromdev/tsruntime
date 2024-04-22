@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "@types/jest": "^23.3.9",
+    "@types/node": "^18.19.10",
     "jest": "^23.6.0",
     "lerna": "^3.5.1",
     "reflect-metadata": "^0.1.10",

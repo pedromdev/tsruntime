@@ -4,6 +4,9 @@ import { REFLECTIVE_KEY } from "../runtime/common";
 import { makeLiteral } from "./makeLiteral";
 import { getReflect } from "./reflect";
 import { Ctx, ScopeType } from "./types";
+import { schemaGenerator } from "./schemaGenerator";
+import * as cycle from "./cycle";
+
 
 function getSymbolId(symb: ts.Symbol): number {
   return ((symb as any) as { id: number }).id;
@@ -164,10 +167,13 @@ function Transformer(program: ts.Program, context: ts.TransformationContext) {
     onBeforeVisitNode(source);
     const newNode = ts.visitEachChild(source, visitor, context);
     newNode.symbol = source.symbol;
+    schemaGenerator.generate();
     return newNode;
   }
   return transform;
 }
+
+schemaGenerator.reset();
 
 export default function TransformerFactory(
   program: ts.Program

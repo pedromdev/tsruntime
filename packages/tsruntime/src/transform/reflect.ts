@@ -1,5 +1,7 @@
 import * as ts from "typescript";
-import {ClassType, Constructor, ConstructorParameter, Ctx, ReflectedType, TypeKind} from "./types";
+import { ClassType, Constructor, ConstructorParameter, Ctx, ReflectedType, TypeKind, typescript } from "./types";
+
+const typeCache = new Map<number, ReflectedType>();
 
 namespace Normalizers {
   function normalizeBooleans(types: ReflectedType[]): ReflectedType[] {
@@ -22,7 +24,7 @@ namespace Normalizers {
     }
 
     if (hasBoolean || (hasTrue && hasFalse)) {
-      return [{ kind: TypeKind.Boolean }];
+      return [{ id: -1, kind: TypeKind.Boolean }];
     }
     return types;
   }
@@ -55,13 +57,14 @@ namespace Normalizers {
 }
 
 export function getReflect(ctx: Ctx) {
-  function serializeUnion(type: ts.UnionType): ReflectedType {
+
+  function serializeUnion(type: typescript.UnionType): ReflectedType {
     const nestedTypes = type.types.map(t => reflectType(t));
     const normalizedTypes = Normalizers.normalizeUnion(nestedTypes);
-    return { kind: TypeKind.Union, types: normalizedTypes };
+    return { id: type.id!, kind: TypeKind.Union, types: normalizedTypes };
   }
 
-  function serializeReference(type: ts.TypeReference): ReflectedType {
+  function serializeReference(type: typescript.TypeReference): ReflectedType {
     const typeArgs = type.typeArguments;
     let allTypes: ReflectedType[] = [];
     if (typeArgs !== undefined) {
@@ -69,11 +72,12 @@ export function getReflect(ctx: Ctx) {
     }
     const target = type.target;
     if (target.objectFlags & ts.ObjectFlags.Tuple) {
-      return { kind: TypeKind.Tuple, elementTypes: allTypes };
+      return { id: type.id!, kind: TypeKind.Tuple, elementTypes: allTypes };
     }
     const symbol = target.getSymbol()!;
     if (symbol.valueDeclaration === undefined) {
       return {
+        id: type.id!,
         kind: TypeKind.Object,
         name: symbol.getName(),
         // arguments: allTypes,
@@ -81,11 +85,11 @@ export function getReflect(ctx: Ctx) {
       };
     } else {
       const typeName = getIdentifierForSymbol(target);
-      return { kind: TypeKind.Reference, arguments: allTypes, type: typeName };
+      return { id: type.id!, kind: TypeKind.Reference, arguments: allTypes, type: typeName };
     }
   }
 
-  function getIdentifierForSymbol(type: ts.Type): ts.Identifier {
+  function getIdentifierForSymbol(type: typescript.Type): ts.Identifier {
     let name: string;
 
     const typenode = ctx.checker.typeToTypeNode(type, ctx.node, undefined)!; //todo not sure
@@ -144,14 +148,15 @@ export function getReflect(ctx: Ctx) {
     const modifiers = ts.getCombinedModifierFlags(decl);
 
     const name = getPropertyName(sym);
-    const initializer = ts.isPropertyDeclaration(sym.valueDeclaration!)
+
+    serializedType.initializer = ts.isPropertyDeclaration(sym.valueDeclaration!)
       ? serializeInitializer(sym.valueDeclaration)
       : undefined;
 
     return {
       name: name,
       modifiers,
-      type: {...serializedType, initializer},
+      type: serializedType,
     };
   }
 
@@ -182,38 +187,50 @@ export function getReflect(ctx: Ctx) {
     }
   }
 
-  function serializeObjectType(type: ts.ObjectType): ReflectedType {
+  function serializeObjectType(type: typescript.ObjectType): ReflectedType {
+    const reflectedType = {
+      id: type.id!,
+    } as ReflectedType;
     const symbol = type.getSymbol()!;
 
-    let properties = ctx.checker
+    if (typeCache.has(type.id!)) {
+      return typeCache.get(type.id!)!;
+    } else {
+      typeCache.set(type.id!, reflectedType);
+    }
+
+    if (type.getCallSignatures().length) {
+      reflectedType.kind = TypeKind.Function;
+
+      return reflectedType;
+    }
+
+    const reflectedType1 = reflectedType as any;
+    reflectedType1.kind = TypeKind.Object;
+    reflectedType1.name = (type.objectFlags & ts.ObjectFlags.Anonymous) ? undefined : symbol.getName();
+    reflectedType1.properties = ctx.checker
       .getPropertiesOfType(type)
       .map(serializePropertySymbol);
 
-    let name;
-    if (type.objectFlags & ts.ObjectFlags.Anonymous) {
-      name = undefined;
-    } else {
-      name = symbol.getName();
-    }
-    if (type.getCallSignatures().length) {
-      return {kind: TypeKind.Function }
-    }
-    return { kind: TypeKind.Object, name: name, properties };
+    return reflectedType;
   }
 
-  function serializeObject(type: ts.ObjectType): ReflectedType {
+  function serializeObject(type: typescript.ObjectType): ReflectedType {
     if (type.objectFlags & ts.ObjectFlags.Reference) {
       return serializeReference(<ts.TypeReference>type);
     }
     const symbol = type.getSymbol()!;
 
     if (symbol.flags & ts.SymbolFlags.Method) {
-      return {kind: TypeKind.Function }
+      return {
+        id: type.id!,
+        kind: TypeKind.Function
+      }
     }
 
     if (symbol.valueDeclaration !== undefined) {
       const typeName = getIdentifierForSymbol(type);
-      return { kind: TypeKind.Reference, type: typeName, arguments: [] };
+      return { id: type.id!, kind: TypeKind.Reference, type: typeName, arguments: [] };
     }
     return serializeObjectType(type);
 
@@ -228,55 +245,57 @@ export function getReflect(ctx: Ctx) {
     // return { kind: TypeKind.Unknown2 };
   }
 
-  function reflectType(type: ts.Type): ReflectedType {
+  function reflectType(type: typescript.Type): ReflectedType {
     if (type.flags & ts.TypeFlags.Any) {
-      return { kind: TypeKind.Any };
+      return { id: type.id!, kind: TypeKind.Any };
     } else if (type.flags & ts.TypeFlags.StringLiteral) {
       return {
+        id: type.id!,
         kind: TypeKind.StringLiteral,
         value: (type as ts.StringLiteralType).value
       };
     } else if (type.flags & ts.TypeFlags.NumberLiteral) {
       return {
+        id: type.id!,
         kind: TypeKind.NumberLiteral,
         value: (type as ts.NumberLiteralType).value
       };
     } else if (type.flags & ts.TypeFlags.String) {
-      return { kind: TypeKind.String };
+      return { id: type.id!, kind: TypeKind.String };
     } else if (type.flags & ts.TypeFlags.Number) {
-      return { kind: TypeKind.Number };
+      return { id: type.id!, kind: TypeKind.Number };
     } else if (type.flags & ts.TypeFlags.Boolean) {
-      return { kind: TypeKind.Boolean };
+      return { id: type.id!, kind: TypeKind.Boolean };
     } else if (type.flags & ts.TypeFlags.BooleanLiteral) {
       switch ((type as any).intrinsicName) {
         case "true":
-          return { kind: TypeKind.TrueLiteral };
+          return { id: type.id!, kind: TypeKind.TrueLiteral };
         case "false":
-          return { kind: TypeKind.FalseLiteral };
+          return { id: type.id!, kind: TypeKind.FalseLiteral };
       }
     } else if (type.flags & ts.TypeFlags.ESSymbol) {
-      return { kind: TypeKind.ESSymbol };
+      return { id: type.id!, kind: TypeKind.ESSymbol };
     } else if (type.flags & ts.TypeFlags.Void) {
-      return { kind: TypeKind.Void };
+      return { id: type.id!, kind: TypeKind.Void };
     } else if (type.flags & ts.TypeFlags.Undefined) {
-      return { kind: TypeKind.Undefined };
+      return { id: type.id!, kind: TypeKind.Undefined };
     } else if (type.flags & ts.TypeFlags.Null) {
-      return { kind: TypeKind.Null };
+      return { id: type.id!, kind: TypeKind.Null };
     } else if (type.flags & ts.TypeFlags.Never) {
-      return { kind: TypeKind.Never };
+      return { id: type.id!, kind: TypeKind.Never };
     } else if (type.flags & ts.TypeFlags.Unknown) {
-      return { kind: TypeKind.Unknown };
+      return { id: type.id!, kind: TypeKind.Unknown };
     } else if (type.flags & ts.TypeFlags.Object) {
       return serializeObject(<ts.ObjectType>type);
     } else if (type.flags & ts.TypeFlags.Union) {
       return serializeUnion(<ts.UnionType>type);
     }
     ctx.reportUnknownType(type);
-    return { kind: TypeKind.Unknown2 };
+    return { id: type.id!, kind: TypeKind.Unknown2 };
   }
 
   function reflectClass(
-    type: ts.InterfaceTypeWithDeclaredMembers,
+    type: typescript.InterfaceTypeWithDeclaredMembers,
   ): ClassType {
     const base = type.getBaseTypes()!;
     let extendsCls: ReflectedType | undefined;
@@ -292,6 +311,7 @@ export function getReflect(ctx: Ctx) {
     const constructors = constructorType.getConstructSignatures().map(serializeConstructorSignature);
 
     return {
+      id: type.id!,
       name: name!,
       properties,
       constructors,

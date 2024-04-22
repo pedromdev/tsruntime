@@ -100,6 +100,7 @@ export type ReflectedType =
   | SimpleTypes;
 
 export interface BaseType<TKind extends TypeKind, T> {
+  id: number;
   kind: TKind;
   modifiers?: ModifierFlags;
   initializer?: () => T;

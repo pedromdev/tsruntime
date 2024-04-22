@@ -109,3 +109,17 @@ export type ClassType = Override<
     extends?: ReflectedType;
   }
 >;
+
+export type RefType = {
+  $ref: string;
+};
+
+type TypeId<T> = T & { id?: number };
+
+export namespace typescript {
+  export type Type = TypeId<ts.Type>;
+  export type TypeReference = TypeId<ts.TypeReference>;
+  export type UnionType = TypeId<ts.UnionType>;
+  export type ObjectType = TypeId<ts.ObjectType>;
+  export type InterfaceTypeWithDeclaredMembers = TypeId<ts.InterfaceTypeWithDeclaredMembers>;
+}
